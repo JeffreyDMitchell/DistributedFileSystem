@@ -59,6 +59,32 @@ struct f_stub
 // supported commands
 char * commands[] = {"get", "put", "list", NULL};
 struct s_info servers[SERVER_CT];
+struct timeval timeout;
+
+int socketWrapper(int domain, int type, int protocol)
+{
+    int sockfd;
+    if((sockfd = socket(domain, type, protocol)) == -1)
+        return -1;
+
+    // set SO_RCVTIMEO
+    if(setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (void *)&timeout, sizeof(timeout)) < 0) 
+    {
+        perror("Error setting SO_RCVTIMEO");
+        close(sockfd);
+        return -1;
+    }
+
+    // set SO_SNDTIMEO
+    if(setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (void *)&timeout, sizeof(timeout)) < 0) 
+    {
+        perror("Error setting SO_SNDTIMEO");
+        close(sockfd);
+        return -1;
+    }
+
+    return sockfd;
+}
 
 int parseCommand(char * command)
 {
@@ -208,11 +234,13 @@ void getFileState(struct f_stub ** stubs, int * stub_ct)
     // for each server
     for(int server_num = 0; server_num < SERVER_CT; server_num++)
     {
-        if((client_sock = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+        if((client_sock = socketWrapper(AF_INET, SOCK_STREAM, 0)) == -1)
         {
             printf("Failed to create socket.\n");
             continue;
         }
+
+        // set socket options
 
         if(connect(client_sock, (struct sockaddr *) &servers[server_num].net_inf.sin, servers[server_num].net_inf.addr_len) == -1)
         {
@@ -364,7 +392,7 @@ void putRoutine(int ct, char ** files)
         // for each server
         for(int server_num = 0; server_num < SERVER_CT; server_num++)
         {
-            if((client_sock = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+            if((client_sock = socketWrapper(AF_INET, SOCK_STREAM, 0)) == -1)
             {
                 printf("Failed to create socket for file '%s'. Continuing...\n", files[f_num]);
                 continue;
@@ -467,7 +495,7 @@ void getRoutine(int ct, char ** files)
         for(int server_num = 0; server_num < SERVER_CT; server_num++)
         {
             // TODO we could do a check here to see if all chunk have been acquired, and finish early without extra connections
-            if((client_sock = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+            if((client_sock = socketWrapper(AF_INET, SOCK_STREAM, 0)) == -1)
             {
                 printf("Failed to create socket for file '%s'. Continuing...\n", files[f_num]);
                 continue;
@@ -610,6 +638,10 @@ int main(int argc, char ** argv)
         printf("Usage: %s [command] [filename] ... [filename]\n", argv[0]);
         exit(-1);
     }
+
+    // set the timeout values
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
 
     initServers();
 

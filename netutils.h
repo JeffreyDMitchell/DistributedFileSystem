@@ -40,6 +40,7 @@ struct entry
 int min(int a, int b);
 int sendAll(int s, char *buf, int len);
 int recvFile(FILE * fptr, long size, int sock);
+int connectTimeout(int sockfd, const struct sockaddr *addr, socklen_t addrlen, unsigned int timeout_ms);
 int parseEntry(struct entry * e, char * f_name);
 void md5Str(char * in_str, char * hash_str);
 unsigned long md5Sum(char * in_str);
