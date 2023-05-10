@@ -12,10 +12,15 @@ TODO
 #include <string.h>
 #include <dirent.h>
 
+#include <fcntl.h>
+#include <sys/sendfile.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
 #include "netutils.h"
 #include "com.h"
 
-#define IN_BUFF_LENGTH 1024
+// #define IN_BUFF_LENGTH 1024
 
 struct thread_args
 {
@@ -39,26 +44,99 @@ void putRoutine(struct comseg * com, int sock)
         return;
     }
 
-    char in_buff[IN_BUFF_LENGTH];
-    memset(in_buff, 0, IN_BUFF_LENGTH);
+    // char in_buff[IN_BUFF_LENGTH];
+    // memset(in_buff, 0, IN_BUFF_LENGTH);
 
-    long bytes = com->f_size;
-    long total = 0;
-    int last_chunk;
-    while(total < bytes)
-    {
-        last_chunk = recv(sock, in_buff, min(bytes - total, IN_BUFF_LENGTH), 0);
-        fwrite(in_buff, sizeof(char), last_chunk, fptr);
-        total += last_chunk;
-    }
+    // long bytes = com->f_size;
+    // long total = 0;
+    // int last_chunk;
+    // while(total < bytes)
+    // {
+    //     last_chunk = recv(sock, in_buff, min(bytes - total, IN_BUFF_LENGTH), 0);
+    //     fwrite(in_buff, sizeof(char), last_chunk, fptr);
+    //     total += last_chunk;
+    // }
+    recvFile(fptr, com->f_size, sock);
 
     fclose(fptr);
     // printf("Done!!\n\n");
 }
 
-void getRoutine(struct comseg * com)
+void getRoutine(struct comseg * com, int sock)
 {
+    int fd;
+    DIR *dir;
+    struct dirent * ent;
+    struct stat file_stat;
     
+    // get all files in directory
+    if(!(dir = opendir("./")))
+    {
+        perror("Unable to open directory.\n");
+        return;
+    }
+
+    struct entry e;
+    // struct comseg res;
+    while((ent = readdir(dir)))
+    {
+        // not '.' or '..'
+        if(!(strcmp(ent->d_name, ".") && strcmp(ent->d_name, ".."))) continue;
+
+        parseEntry(&e, ent->d_name);
+
+        // not a hit, continue
+        if(!(strcmp(ent->d_name, com->f_name) && com->time_stamp == e.timestamp && com->chunk_num == e.chunk)) continue;
+
+        // it's a hit!
+
+        // open up a file descriptor
+        if((fd = open(ent->d_name, O_RDONLY)) == -1)
+        {
+            printf("Error opening file '%s'.\n", ent->d_name);
+            break;
+        }
+
+        if(fstat(fd, &file_stat) == -1)
+        {
+            printf("Failed to get file stats for file '%s'.\n", ent->d_name);
+            close(fd);
+            break;
+        }
+
+        // send success, file metadata
+        // lots of unncessesary data sent here
+        buildCom(
+            com,
+            SUCCESS,
+            e.chunk,
+            e.timestamp,
+            file_stat.st_size,
+            0,
+            e.name
+        );
+        sendCom(com, sock);
+
+        // send the file
+        off_t zero = 0;
+        sendfile(sock, fd, &zero, file_stat.st_size);
+
+        // RETURN
+        return;
+    }
+
+    // if we've reached here, we have failed to find the requested chunk. inform client
+    buildCom(
+        com,
+        INVALID,
+        0,
+        0,
+        0,
+        0,
+        ""
+    );
+    sendCom(com, sock);
+
 }
 
 void lstRoutine(struct comseg * com, int sock)
@@ -161,6 +239,7 @@ void * connTask(void * t_args)
 
             case GET:
             printf("Getting...\n");
+            getRoutine(&com,  args.client_sock);
             break;
 
             case LST:

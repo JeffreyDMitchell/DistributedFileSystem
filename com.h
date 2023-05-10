@@ -13,7 +13,7 @@
 #include "netutils.h"
 
 #define RAW_COM_LEN 256
-#define MAX_FILE_NAME 240
+
 // this was arbitrary... pick a better number
 #define MAX_CHUNK_NAME 512
 
