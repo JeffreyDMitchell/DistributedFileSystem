@@ -3,7 +3,7 @@
 TODO:
     - properly get home directory!!!!!
     - adapt com (de)serialization to be endian agnostic
-    - some bug where a gile was uplaoded without a name???
+    - some bug where a file was uplaoded without a name???
         - MUST MAKE SURE THAT FILE IS NOT DIRECTORY
 CONCERNS:
     - when putting multiple files, i dont do any sort of preliminary check
@@ -18,12 +18,10 @@ CONCERNS:
 #include <regex.h>
 #include <stdio.h>
 #include <sys/time.h>
-
 #include <fcntl.h>
 #include <sys/sendfile.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-
 
 #include "netutils.h"
 #include "com.h"
@@ -95,8 +93,8 @@ int versionCmp(const void * a, const void * b)
     struct version * v_a = (struct version *) a;
     struct version * v_b = (struct version *) b;
 
-    if(v_a->timestamp > v_b->timestamp) return 1;
-    if(v_a->timestamp < v_b->timestamp) return -1;
+    if(v_a->timestamp > v_b->timestamp) return -1;
+    if(v_a->timestamp < v_b->timestamp) return 1;
 
     return 0;
 }
@@ -225,9 +223,6 @@ void getFileState(struct f_stub ** stubs, int * stub_ct)
             continue;
         }
 
-        // TODO temp testing prints. remove before submission
-        // printf("Successfully connected to server '%s'!\n", servers[server_num].name);
-
         // CONNECTION STUFF STARTS HERE
         struct comseg com;
         buildCom(
@@ -244,7 +239,6 @@ void getFileState(struct f_stub ** stubs, int * stub_ct)
         sendCom(&com, client_sock);
 
         // recieve names of all files present on server
-        // TODO scary inf loop
         while(1)
         {
             // recieve com segment from server
@@ -259,13 +253,6 @@ void getFileState(struct f_stub ** stubs, int * stub_ct)
                 printf("Failed to parse entry for string: %s\n", com.f_name);
                 continue;
             }
-
-            // printf(
-            //     "Recieved entry:\n"
-            //     "Chunk Number: %d\n"
-            //     "Timestamp: %ld\n"
-            //     "File Name: %s\n",
-            //     e.chunk, e.timestamp, e.name);
 
             // search stubs list for file name
             struct f_stub * cur_stub = NULL;
@@ -310,7 +297,6 @@ void getFileState(struct f_stub ** stubs, int * stub_ct)
             if(cur_vers == NULL)
             {
                 // add another version
-                // cur_vers = cur_stub->versions + cur_stub->version_ct;
                 cur_stub->versions = realloc(cur_stub->versions, (cur_stub->version_ct + 1) * sizeof(struct version));
                 cur_vers = cur_stub->versions + (cur_stub->version_ct);
                 cur_stub->version_ct = cur_stub->version_ct + 1;
@@ -324,20 +310,25 @@ void getFileState(struct f_stub ** stubs, int * stub_ct)
             }
 
             // mark chunk of current version accounted for...
-            // all that work
             cur_vers->chunks[e.chunk] = 1;
         }
 
-        // TODO send server fin??? TODO TODO TODO
+            buildCom(
+                &com,
+                SUCCESS,
+                0,
+                0,
+                0,
+                1,
+                ""
+            );
+            sendCom(&com, client_sock);
 
         // terminate connection
         shutdown(client_sock, SHUT_RDWR);
         close(client_sock);
     }
 
-    // TODO sort chunks by timestamp, value more recent versions
-    // this is.. mostly untested
-    // THIS REALLY MIGHT NOT BE RIGHT, SCRUTINIZE IT TOMORROW
     for(int i = 0; i < (*stub_ct); i++)
         qsort((*stubs)[i].versions, (*stubs)[i].version_ct, sizeof(struct version), versionCmp);
 }
@@ -381,21 +372,13 @@ void putRoutine(int ct, char ** files)
 
             if(connect(client_sock, (struct sockaddr *) &servers[server_num].net_inf.sin, servers[server_num].net_inf.addr_len) == -1)
             {
-                // printf("Failed to connect to server '%s' for file '%s'. Continuing...\n", servers[server_num].name, files[f_num]);
-                // continue;
-
                 // per discussion in lecture, if even a single server is down, put should fail.
                 printf("%s put failed.\n", nameFromPath(files[f_num]));
                 break;
             }
 
-            // TODO temp testing prints. remove before submission
-            // printf("Successfully connected to server '%s' for file '%s'!\n", servers[server_num].name, files[f_num]);
-
             // CONNECTION STUFF STARTS HERE
-            
             // compute md5 hash of file for more varied distribution (sort of...)
-            // TODO signedness issues???? ahhhh
             unsigned int hash_off = (unsigned int) md5Sum(nameFromPath(files[f_num]));
             struct comseg com;
             for(int c = 0; c < DIST_FACTOR; c++)
@@ -414,10 +397,8 @@ void putRoutine(int ct, char ** files)
                     (c == DIST_FACTOR-1),                   // fin (no more chunks)
                     nameFromPath(files[f_num])              // file name
                 );
-                // printCom(&com);
                 sendCom(&com, client_sock);
 
-                // TODO check return value?
                 sendfile(
                     client_sock, 
                     fd, 
@@ -476,10 +457,6 @@ void getRoutine(int ct, char ** files)
             printf("%s is incomplete.\n", files[f_num]);
             continue;
         }
-
-        // file can be reconstructed, assemble all of the chunks and knit together!
-        // + 1 to account for prepended '.'
-        char name[MAX_CHUNK_NAME + 1];
         
         struct comseg com;
         FILE * chunk_ptrs[SERVER_CT];
@@ -498,8 +475,9 @@ void getRoutine(int ct, char ** files)
 
             if(connect(client_sock, (struct sockaddr *) &servers[server_num].net_inf.sin, servers[server_num].net_inf.addr_len) == -1)
             {
-                // printf("Failed to connect to server '%s' for file '%s'. Continuing...\n", servers[server_num].name, files[f_num]);
-                // continue;
+                #ifdef DEBUG_RUN
+                printf("Failed to connect to server '%s'.\n", servers[server_num].name);
+                #endif
                 continue;
             }
 
@@ -527,7 +505,6 @@ void getRoutine(int ct, char ** files)
                 if(com.method != SUCCESS) continue;
 
                 // server had chunk, open a new temp file to recieve
-                // TODO wtf is the void parameter about?
                 if((chunk_ptrs[chunk] = tmpfile()) == NULL)
                 {
                     perror("Temporary file could not be generated. What the actual hell.\n");
@@ -548,8 +525,8 @@ void getRoutine(int ct, char ** files)
                 1,
                 ""
             );
+            sendCom(&com, client_sock);
 
-            // TODO TODO TODO close connection
             shutdown(client_sock, SHUT_RDWR);
             close(client_sock);
         }
@@ -584,6 +561,12 @@ void getRoutine(int ct, char ** files)
         for(int i = 0; i < SERVER_CT; i++)
             fclose(chunk_ptrs[i]);
     }
+
+    // must free file state structures
+    for(int f_idx = 0; f_idx < stub_ct; f_idx++)
+        free(stubs[f_idx].versions);
+
+    free(stubs);
 }
 
 void lstRoutine()
@@ -612,7 +595,7 @@ void lstRoutine()
         printf("%s%s\n", cur_stub->name, (complete ? "" : " [incomplete]"));
     }
 
-    // TODO must free structures
+    // must free structures
     for(int f_idx = 0; f_idx < stub_ct; f_idx++)
         free(stubs[f_idx].versions);
 
@@ -621,12 +604,12 @@ void lstRoutine()
 
 int main(int argc, char ** argv)
 {
-    // TODO change this to allow list...
-    // if(argc < 3)
-    // {
-    //     printf("Usage: %s [command] [filename] ... [filename]\n", argv[0]);
-    //     exit(-1);
-    // }
+
+    if(argc < 2)
+    {
+        printf("Usage: %s [command] [filename] ... [filename]\n", argv[0]);
+        exit(-1);
+    }
 
     initServers();
 

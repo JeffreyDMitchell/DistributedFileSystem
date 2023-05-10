@@ -22,6 +22,8 @@ TODO
 
 // #define IN_BUFF_LENGTH 1024
 
+pthread_mutex_t fs_lock;
+
 struct thread_args
 {
     int client_sock;
@@ -44,18 +46,6 @@ void putRoutine(struct comseg * com, int sock)
         return;
     }
 
-    // char in_buff[IN_BUFF_LENGTH];
-    // memset(in_buff, 0, IN_BUFF_LENGTH);
-
-    // long bytes = com->f_size;
-    // long total = 0;
-    // int last_chunk;
-    // while(total < bytes)
-    // {
-    //     last_chunk = recv(sock, in_buff, min(bytes - total, IN_BUFF_LENGTH), 0);
-    //     fwrite(in_buff, sizeof(char), last_chunk, fptr);
-    //     total += last_chunk;
-    // }
     recvFile(fptr, com->f_size, sock);
 
     fclose(fptr);
@@ -89,7 +79,6 @@ void getRoutine(struct comseg * com, int sock)
         if(!(strcmp(ent->d_name, com->f_name) && com->time_stamp == e.timestamp && com->chunk_num == e.chunk)) continue;
 
         // it's a hit!
-
         // open up a file descriptor
         if((fd = open(ent->d_name, O_RDONLY)) == -1)
         {
@@ -165,7 +154,7 @@ void lstRoutine(struct comseg * com, int sock)
             0,
             entry->d_name
         );
-        printCom(com);
+        // printCom(com);
         sendCom(com, sock);
     }
 
@@ -178,7 +167,7 @@ void lstRoutine(struct comseg * com, int sock)
         1,
         ""
     );
-    printCom(com);
+    // printCom(com);
     sendCom(com, sock);
 
     closedir(dir);
@@ -218,42 +207,42 @@ void * connTask(void * t_args)
     pthread_detach(pthread_self());
     struct thread_args args = *((struct thread_args *) t_args);
     free(t_args);
+    // lock down file system (serial access, bad approach, ez pz implementation)
+    pthread_mutex_lock(&fs_lock);
 
-    printf("Server recieved a connection.\n");
+    // printf("Server recieved a connection.\n");
 
     // recieve command segment
     struct comseg com;
-    
     do
     {
         recvCom(&com, args.client_sock);
 
-        printCom(&com);
+        // printCom(&com);
 
         switch(com.method)
         {
             case PUT:
-            printf("Putting...\n");
+            // printf("Putting...\n");
             putRoutine(&com, args.client_sock);
             break;
 
             case GET:
-            printf("Getting...\n");
+            // printf("Getting...\n");
             getRoutine(&com,  args.client_sock);
             break;
 
             case LST:
-            printf("Listing...\n");
+            // printf("Listing...\n");
             lstRoutine(&com, args.client_sock);
             break;
-
-            default:
-            printf("Unrecognized method recieved. That's not good...\n");
         }
     }
     while(!com.fin);
 
     close(args.client_sock);
+
+    pthread_mutex_unlock(&fs_lock);
 
     return NULL;
 }
@@ -264,9 +253,11 @@ int main(int argc, char ** argv)
     int port_num;
     struct netinfo server_info, client_info;
 
-
     // SIGNALS
     signal(SIGPIPE, SIG_IGN);
+
+    // init file system lock
+    pthread_mutex_init(&fs_lock, NULL);
 
     // verify command line arguments
     if(argc < 3)
@@ -310,7 +301,7 @@ int main(int argc, char ** argv)
     {
         perror("setsockopt");
         close(server_sock);
-        exit(EXIT_FAILURE);
+        exit(-1);
     }
 
     // bind

@@ -11,6 +11,9 @@
 #include <openssl/md5.h>
 #include <string.h>
 #include <regex.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <time.h>
 
 #include <stdlib.h>
 

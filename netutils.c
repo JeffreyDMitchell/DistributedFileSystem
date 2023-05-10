@@ -5,7 +5,6 @@ int min(int a, int b)
     return a < b ? a : b;
 }
 
-// citation https://beej.us/guide/bgnet/html/
 int sendAll(int s, char *buf, int len)
 {
     int total = 0;        
@@ -40,6 +39,99 @@ int recvFile(FILE * fptr, long size, int sock)
     }
 
     return total;
+}
+// citation: https://stackoverflow.com/questions/2597608/c-socket-connection-timeout
+// this was brutal... I figured connection timeout would be as simple as a call to setsockopt
+// instead, I spent an hour reading about select, poll, and syncrhonous IO.
+// code below is essentially the same as the best practice laid out in the stack overflow thread
+int connectTimeout(int sockfd, const struct sockaddr *addr, socklen_t addrlen, unsigned int timeout_ms) 
+{
+    int rc = 0;
+
+    // configure socket to be non-blocking
+    int initial_flags;
+    if((initial_flags = fcntl(sockfd, F_GETFL, 0) < 0)) 
+        return -1;
+    
+    if(fcntl(sockfd, F_SETFL, initial_flags | O_NONBLOCK) < 0) 
+        return -1;
+
+    // begin connection
+    do 
+    {
+        if(connect(sockfd, addr, addrlen) < 0)
+        {
+
+            // fail if connect errors
+            if((errno != EWOULDBLOCK) && (errno != EINPROGRESS)) 
+            {
+                rc = -1;
+            }
+            else 
+            {
+                // set deadline to now + timeout_ms
+                struct timespec now;
+                if(clock_gettime(CLOCK_MONOTONIC, &now) < 0) 
+                { 
+                    rc=-1; 
+                    break; 
+                }
+                struct timespec deadline = { .tv_sec = now.tv_sec, .tv_nsec = now.tv_nsec + timeout_ms*1000000l};
+                // wait for the connection to complete.
+                do {
+                    // check deadline
+                    if(clock_gettime(CLOCK_MONOTONIC, &now) < 0) 
+                    { 
+                        rc=-1; 
+                        break; 
+                    }
+
+                    int ms_until_deadline = (int)((deadline.tv_sec - now.tv_sec) * 1000l + (deadline.tv_nsec - now.tv_nsec) / 1000000l);
+                    if(ms_until_deadline < 0) 
+                    { 
+                        // we're past the deadline, break out
+                        rc=0; 
+                        break; 
+                    }
+
+                    // wait for connect to complete
+                    // TODO change this to a normal struct, reference?
+                    struct pollfd pfds[] = { { .fd = sockfd, .events = POLLOUT } }; // wtf...
+                    rc = poll(pfds, 1, ms_until_deadline);
+
+                    // check if poll succeeded
+                    if(rc>0) 
+                    {
+                        int error = 0; 
+                        socklen_t len = sizeof(error);
+                        int retval = getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &len);
+
+                        if(retval==0) 
+                            errno = error;
+                        if(error!=0) 
+                            rc=-1;
+                    }
+                }
+                // If poll was interrupted, try again.
+                while(rc==-1 && errno==EINTR);
+                // fail on timeout
+                if(rc==0) 
+                {
+                    errno = ETIMEDOUT;
+                    rc=-1;
+                }
+            }
+        }
+    } 
+    // this nastly little loop allows us to cont / break. sorta feels like a hacky equivalent to GOTO, i wonder why people use this...
+    while(0);
+
+    // restore original flags
+    if(fcntl(sockfd, F_SETFL, initial_flags) < 0) 
+        return -1;
+    
+    // if we got here, success!
+    return rc;
 }
 
 int parseEntry(struct entry * e, char * f_name)
