@@ -27,10 +27,14 @@ int recvCom(struct comseg * com, int s)
     // recv the com buffer
     // TODO implement timeout and failure case
     int total = 0;
+    int bytes;
     // printf("before recv com\n");
     while(total < RAW_COM_LEN)
     {
-        total += recv(s, raw + total, RAW_COM_LEN - total, 0);
+        bytes = recv(s, raw + total, RAW_COM_LEN - total, 0);
+        if(bytes < 0) return -1;
+
+        total += bytes;
         // printf("total: %d\n", total);
     }
     // printf("after recv com\n");

@@ -26,9 +26,10 @@ CONCERNS:
 #include "netutils.h"
 #include "com.h"
 
-#define DEBUG_RUN
+// #define DEBUG_RUN
 
-#define CONFIG_PATH "/home/jeff/dfc.conf"
+// #define CONFIG_PATH "/home/jeff/dfc.conf"
+#define CONFIG_FILE "/dfc.conf"
 #define CONFIG_MAX_LINE 1024
 #define UTIL_STR_LEN 256
 #define SERVER_CT 4
@@ -131,7 +132,19 @@ void initServers()
     memset(servers, 0, SERVER_CT * sizeof(struct netinfo));
 
     FILE * config;
-    if(!(config = fopen(CONFIG_PATH, "r")))
+    char config_path[1024];
+    char * home_dir;
+    memset(config_path, 0, 1024);
+
+    if((home_dir = getenv("HOME")) == NULL)
+    {
+        printf("HOME environemnt variable not set. Assuming '/home/user/dfc.conf'\n");
+        sprintf(config_path, "%s%s", "/home/user", CONFIG_FILE);
+    }
+    else
+        sprintf(config_path, "%s%s", home_dir, CONFIG_FILE);
+
+    if(!(config = fopen(config_path, "r")))
     {
         printf("Config file not found.\n");
         exit(-1);
@@ -190,7 +203,7 @@ void initServers()
 
     if(ct < SERVER_CT)
     {
-        printf("Too few servers outlined in %s.\n", CONFIG_PATH);
+        printf("Too few servers outlined in %s.\n", config_path);
         exit(-1);
     }
 }
@@ -270,7 +283,9 @@ void getFileState(struct f_stub ** stubs, int * stub_ct)
         while(1)
         {
             // recieve com segment from server
-            recvCom(&com, client_sock);
+            // if recvCom fails, bail out
+            if(recvCom(&com, client_sock) < 0)
+                break;
 
             // if finished, get out
             if(com.fin) break;
@@ -379,6 +394,13 @@ void putRoutine(int ct, char ** files)
         if(fstat(fd, &file_stat) == -1)
         {
             printf("Failed to get file stats for file '%s'.\n", files[f_num]);
+            close(fd);
+            continue;
+        }
+
+        if(S_ISDIR(file_stat.st_mode))
+        {
+            printf("%s is a directory.\n", files[f_num]);
             close(fd);
             continue;
         }
@@ -527,7 +549,9 @@ void getRoutine(int ct, char ** files)
                 sendCom(&com, client_sock);
 
                 // determine if server hash chunk or not
-                recvCom(&com, client_sock);
+                // break out if server is down
+                if(recvCom(&com, client_sock) < 0)
+                    break;
 
                 // server did not have chunk, continue on to next
                 if(com.method != SUCCESS) continue;
